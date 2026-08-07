@@ -1,0 +1,29 @@
+INPUT_DIR: input/input_gbm
+OUTPUT_BASE_DIR: output/output_gbm_cfm_10
+HDF5_INPUT: mefisto_model_untrained.hdf5
+DATA_KEYS:
+- gene_exp
+- protein
+LIKELIHOOD_OPTIONS:
+  gene_exp: gaussian
+  protein: gaussian
+USE_COVARIATES: true
+INIT_CFM: true
+GRID_SCALING: 260
+FACTOR_INIT: PCA
+N_ITERATIONS: 30
+RESUME_TRAINING: true
+FLIP_IMAGE: true
+PLOT_DOT_SIZE: 1
+SEEDS:
+- 1928550693
+- 256275112
+- 1323435066
+- 894891300
+REF_SEED_DICT:
+  10: 1928550693
+N_FACTORS_LIST:
+- 10
+- 10
+- 10
+- 10

@@ -1,0 +1,23 @@
+INPUT_DIR: input/input_scnmt
+OUTPUT_BASE_DIR: output/output_scnmt_cfm
+HDF5_INPUT: mefisto_model_untrained.hdf5
+GROUP_IDENT: single_group
+DATA_KEYS:
+- RNA
+- motif_met
+- motif_acc
+LIKELIHOOD_OPTIONS:
+  RNA: gaussian
+  motif_met: gaussian
+  motif_acc: gaussian
+USE_COVARIATES: true
+INIT_CFM: true
+GRID_SCALING: 605000
+FACTOR_INIT: PCA
+N_FACTORS_INIT: 10
+N_FACTORS_FINAL: 10
+N_FACTORS_STEP: 1
+N_SEEDS_PER_STEP: 4
+N_ITERATIONS: 30
+RESUME_TRAINING: true
+PLOT_DOT_SIZE: 2
