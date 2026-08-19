@@ -1,0 +1,1014 @@
+This file is part of MOFTy.
+
+MOFTy is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License version 3 as published by the Free
+Software Foundation.
+
+MOFTy is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+MOFTy. If not, see http://www.gnu.org/licenses/
+
+Copyright(C) 2026 Maximilian Neumann
+
+# scNMT downstream analysis
+
+First replace in `reticulate::use_condaenv("mofa2_analysis", conda = "/Users/maximilianneumann/.local/bin/micromamba", required = TRUE)` the user-specific path to micromamba with the appropriate path on your system.
+
+```{r}
+reticulate::use_condaenv("mofa2_analysis", conda = "/Users/maximilianneumann/.local/bin/micromamba", required = TRUE)
+library(data.table)
+library(purrr)
+library(ggplot2)
+library(ggtext)
+library(ggpubr)
+library(ggrepel)
+library(Matrix)
+library(Rfast2)
+library(tidyr)
+library(MOFA2)
+library(reticulate)
+library(MOFAdata)
+
+mpl  <- import("matplotlib.cm")
+cols <- mpl$get_cmap("seismic")(seq(0, 1, length.out = 256))
+cols <- rgb(cols[,1], cols[,2], cols[,3])
+
+ggplot_theme_NoAxes <- function() {
+  theme(
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  )
+}
+```
+
+
+# Load data
+The scNMT dataset (scnmt_data.txt.gz) and metadata (scnmt_sample_metadata.txt) is available from the MEFISTO tutorials: [here](https://figshare.com/s/242916198fde3353f3e6)
+```{r}
+data <- fread("../input/input_scnmt/scnmt_data.txt")
+head(data,n=3)
+print(data[,length(unique(feature)),by="view"])
+print(data[, .(n_NA = sum(is.na(value)), n_samples = uniqueN(sample)), by = "view"])
+sample_metadata <- fread("../input/input_scnmt/scnmt_sample_metadata.txt")
+print(colnames(sample_metadata))
+```
+
+
+# Visualize data
+```{r}
+axis_start_x <- -6.5
+axis_start_y <- -10.5
+axis_length <- 3
+
+celltype.colors <- c(
+  "Epiblast"="darkorchid4",
+  "Mesoderm"="orangered2",
+  "Primitive_Streak"="cornflowerblue",
+  "Endoderm"="gold2",
+  "Ectoderm"="magenta3"
+)
+
+p <- ggscatter(sample_metadata, x="UMAP1", y="UMAP2", color="lineage10x_2", size = 0.5) +
+  scale_color_manual(
+    values = celltype.colors,
+    labels = c(
+      "Epiblast" = "Epiblast",
+      "Mesoderm" = "Mesoderm",
+      "Primitive_Streak" = "Primitive streak",
+      "Endoderm" = "Endoderm",
+      "Ectoderm" = "Ectoderm"
+    )
+  ) +
+  # Draw custom x-axis line with arrow
+  annotate(
+    "segment",
+    x = axis_start_x,
+    y = axis_start_y,
+    xend = axis_start_x + axis_length,
+    yend = axis_start_y,
+    arrow = arrow(length = unit(0.1, "cm"), type = "closed"),
+    linewidth = 0.4
+  ) +
+  annotate(
+    "segment",
+    x = axis_start_x,
+    y = axis_start_y,
+    xend = axis_start_x,
+    yend = axis_start_y + axis_length,
+    arrow = arrow(length = unit(0.1, "cm"), type = "closed"),
+    linewidth = 0.4
+  ) +
+  annotate("text", x = axis_start_x + axis_length, y = axis_start_y - 0.9, label = "UMAP-1", hjust = 0.5, size = 6 / .pt) +
+  annotate("text", x = axis_start_x - 1, y = axis_start_y + axis_length, label = "UMAP-2", angle = 90, hjust = 0.5, size = 6 / .pt) +
+  theme_void() + # Start with a completely blank theme
+  theme(
+    legend.position = c(0.85, 0.25),
+    legend.text = element_text(size = 6, margin = margin(l = 0, unit = "pt")),
+    legend.title = element_blank(),
+    legend.key.width = unit(0.3, "cm"),
+    legend.key.height = unit(0.3, "cm"),
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 1))) + 
+  theme(
+    plot.margin = margin(r = 5, l = 0, unit = "mm")
+  )
+ggsave(
+    filename = file.path("../paper/scnmt", "scnmt.pdf"),
+  plot = p,
+    width = 5.6/2.54,
+    height = 5.6/2.54,
+    device = "pdf",
+    bg = "transparent"
+)
+
+```
+
+
+# Load trained MOFTy models
+```{r}
+model_file_Z <- "../output/output_scnmt_cfm/runs_combined_factors_10/mofty_model_Z.hdf5"
+model_file_Z_cfm <- "../output/output_scnmt_cfm/runs_combined_factors_10/mofty_model_Z_cfm.hdf5"
+model_file_Z_non_cfm <- "../output/output_scnmt_cfm/runs_combined_factors_10/mofty_model_Z_non_cfm.hdf5"
+
+mofty <- load_model(model_file_Z, sort_factors = FALSE, verbose = TRUE, remove_inactive_factors = FALSE)
+mofty_cfm <- load_model(model_file_Z_cfm, sort_factors = FALSE, verbose = TRUE, remove_inactive_factors = FALSE)
+mofty_non_cfm <- load_model(model_file_Z_non_cfm, sort_factors = FALSE, verbose = TRUE, remove_inactive_factors = FALSE)
+samples_metadata(mofty) <- sample_metadata
+samples_metadata(mofty_cfm) <- sample_metadata
+samples_metadata(mofty_non_cfm) <- sample_metadata
+
+models <- list(
+  mofty = mofty,
+  mofty_cfm = mofty_cfm,
+  mofty_non_cfm = mofty_non_cfm
+)
+```
+
+
+# Variance explained
+```{r}
+print(get_variance_explained(mofty)[["r2_per_factor"]])
+print(get_variance_explained(mofty_cfm)[["r2_per_factor"]])
+print(get_variance_explained(mofty_non_cfm)[["r2_per_factor"]])
+
+# 1. Extract variance explained data for each model
+r2_mofty <- get_variance_explained(mofty)[["r2_per_factor"]][[1]]
+r2_cfm <- get_variance_explained(mofty_cfm)[["r2_per_factor"]][[1]]
+r2_non_cfm <- get_variance_explained(mofty_non_cfm)[["r2_per_factor"]][[1]]
+
+# 2. Combine into a single data.table
+r2_list <- list(
+  "MOFTy combined" = r2_mofty,
+  "MOFTy CFM" = r2_cfm,
+  "MOFTy stochastic" = r2_non_cfm
+)
+
+combined_r2_dt <- rbindlist(lapply(names(r2_list), function(model_name) {
+  as.data.table(r2_list[[model_name]], keep.rownames = "factor")[, model := model_name]
+}), use.names = TRUE, fill = TRUE)
+
+# 3. Melt to long format
+plot_dt <- melt(combined_r2_dt, id.vars = c("factor", "model"), variable.name = "view", value.name = "value")
+plot_dt[, value := value]
+plot_dt[, factor := gsub("Factor", "F", factor)]
+factor_levels <- paste0("F", 1:length(unique(plot_dt$factor)))
+y_levels <- c(rev(factor_levels), "Total")
+plot_dt[, factor := factor(factor, levels = y_levels)]
+
+# 4. Set factor levels for ordering
+plot_dt[, model := factor(model, levels = c("MOFTy combined", "MOFTy CFM", "MOFTy stochastic"), labels = c("Combined", "CFM", "Non-CFM"))]
+plot_dt[, view := factor(view, levels = c("RNA", "motif_met", "motif_acc"), labels = c(
+  "RNA expression",
+  "Motif methylation",
+  "Motif accessibility"
+  ))]
+
+# Total variance explained per model/view for top-row annotations
+r2_total_mofty <- get_variance_explained(mofty)$r2_total[[1]]
+r2_total_cfm <- get_variance_explained(mofty_cfm)$r2_total[[1]]
+r2_total_non_cfm <- get_variance_explained(mofty_non_cfm)$r2_total[[1]]
+
+r2_total_list <- list(
+  "MOFTy combined" = r2_total_mofty,
+  "MOFTy CFM" = r2_total_cfm,
+  "MOFTy stochastic" = r2_total_non_cfm
+)
+
+total_dt <- rbindlist(lapply(names(r2_total_list), function(model_name) {
+  data.table(
+    model = model_name,
+    view = names(r2_total_list[[model_name]]),
+    value = r2_total_list[[model_name]]
+  )
+}), use.names = TRUE)
+
+total_dt[, model := factor(model, levels = c("MOFTy combined", "MOFTy CFM", "MOFTy stochastic"), labels = c("Combined", "CFM", "Non-CFM"))]
+total_dt[, view := factor(view, levels = c("RNA", "motif_met", "motif_acc"), labels = c("RNA expression", "Motif methylation", "Motif accessibility"))]
+total_dt[, factor_label := factor("Total", levels = y_levels)]
+total_dt[, label := sprintf("%.1f", value)]
+
+
+# 5. Create the plot
+p_combined <- ggplot(plot_dt, aes(x = model, y = factor, fill = value)) +
+  geom_tile(color = "black", linewidth = 0.25) +
+  geom_text(
+    data = total_dt,
+    aes(x = model, y = factor_label, label = label),
+    inherit.aes = FALSE,
+    size = 5 / .pt,
+    vjust = 1,
+    hhjust = 0.5,
+    nudge_y = 0.1
+  ) +
+  geom_text(
+    aes(label = sprintf("%.1f", value)),
+    size = 5 / .pt,
+    color = "black"
+  ) +
+  facet_grid(~ view, scales = "free_x", space = "free_x") +
+  coord_cartesian(clip = "off") +
+  geom_text(
+    aes(label = sprintf("%.1f", value), color = value > 5),
+    size = 5 / .pt
+  ) +
+  scale_color_manual(values = c(`FALSE` = "black", `TRUE` = "white"), guide = "none") +
+  scale_y_discrete(
+    drop = FALSE,
+    labels = function(x) ifelse(x %in% c("Total"),"", x),
+    expand = expansion(add = c(0, 0))
+  ) +
+  scale_fill_gradientn(
+    colours = c("#808080", "#FFFFFF", "#3F007D"),  # Gray → White → Purple
+    values = scales::rescale(c(-5, 0, 10), from = c(-5, 10)),
+    limits = c(-5, 10),
+    breaks = c(-5, 0, 5, 10),
+    oob = scales::squish,
+    name = "%",
+    labels = scales::number_format(accuracy = 1)
+  ) +
+  labs(
+    x = NULL, 
+    y = "", 
+    title = ""
+  ) +
+  theme_void() +
+  theme(
+    text = element_text(color = "black"),
+    axis.text.x = element_text(
+      size = 6,
+      color = "black",
+      margin = margin(t = 1.5, b = 1),
+      angle = 90,
+      hjust = 1,
+      vjust = 0.5
+    ),
+    axis.text.y = element_text(size = 6, hjust=1, margin = margin(t = 0, r = 0.2, b = 0, l = 0), color = "black"),
+    axis.ticks = element_blank(),
+    panel.grid = element_blank(),
+    panel.spacing.x = unit(0, "lines"),
+    strip.text = element_text(size = 6, color = "black"),
+    legend.position = "right",
+    legend.box.spacing = unit(4, "pt"),
+    strip.text.x = element_text(margin = margin(b = 2, t = 0)),
+    legend.text = element_text(size = 5, margin = margin(r = 0, l = 1, unit = "pt"), color = "black"),
+    legend.key.height = unit(0.3, 'cm'),
+    legend.key.width = unit(0.12, 'cm'),    
+    legend.ticks = element_line(linewidth = 0),
+    legend.ticks.length = unit(0.0, "mm"),
+    legend.title = element_text(size = 5, margin = margin(b = 0.5, l = -0.7, unit = "pt"), color = "black")
+  )
+
+p_combined <- p_combined +
+  theme(
+    plot.margin = margin(t = 2, r = 8, b = 2, l = 2, unit = "pt"),
+    legend.margin = margin(t = 0, r = 2, b = 0, l = 0, unit = "pt")
+  )
+ggsave(
+    filename = file.path("../paper/scnmt", "scnmt_variance_explained_combined.pdf"),
+    plot = p_combined,
+    width = 7/2.54,
+    height = 5/2.54,
+    device = "pdf",
+    # dpi = 1200,
+    bg = "transparent"
+)
+```
+
+
+# Factor visualization and imputed/reconstructed data visualization
+```{r}
+factors_list <- c(2,4,6)
+set.seed(42)  # Reproducible RNG
+# Moran's I setup (run once)
+coords <- as.matrix(sample_metadata[, .(UMAP1, UMAP2)])
+nx <- 53; ny <- 65
+min_count <- 1
+neighbors <- "queen"
+
+xr <- range(coords[,1]); yr <- range(coords[,2])
+hx <- (xr[2]-xr[1]) / nx; hy <- (yr[2]-yr[1]) / ny
+ix <- pmin(pmax(floor((coords[,1] - xr[1]) / hx), 0), nx-1)
+iy <- pmin(pmax(floor((coords[,2] - yr[1]) / hy), 0), ny-1)
+
+dt_cells <- data.table(row = seq_len(nrow(coords)), ix = ix, iy = iy)
+cells <- dt_cells[, .(n = .N), by = .(ix, iy)][n >= min_count]
+cells[, cid := .I]
+dt_cells <- merge(dt_cells, cells[, .(ix, iy, cid)], by = c("ix","iy"))
+m <- nrow(cells)
+
+off <- if (neighbors == "rook") {
+  rbind(c(1,0), c(-1,0), c(0,1), c(0,-1))
+} else {
+  as.matrix(expand.grid(dx = -1:1, dy = -1:1))[ -5, ]
+}
+key <- with(cells, paste(ix, iy))
+key2cid <- setNames(cells$cid, key)
+edges_i <- integer(); edges_j <- integer()
+for (r in seq_len(nrow(cells))) {
+  ixr <- cells$ix[r]; iyr <- cells$iy[r]; cid_r <- cells$cid[r]
+  nbrs <- cbind(ixr + off[,1], iyr + off[,2])
+  nn_keys <- paste(nbrs[,1], nbrs[,2])
+  ok <- nn_keys %in% names(key2cid)
+  if (any(ok)) {
+    cids <- key2cid[nn_keys[ok]]
+    edges_i <- c(edges_i, rep.int(cid_r, length(cids)))
+    edges_j <- c(edges_j, as.integer(cids))
+  }
+}
+G <- sparseMatrix(i = edges_i, j = edges_j, x = 1, dims = c(m, m))
+G <- (G + Matrix::t(G)); diag(G) <- 0
+rs <- Matrix::rowSums(G); rs[rs == 0] <- 1
+G_row_grid <- as.matrix(Diagonal(x = 1/rs) %*% G)
+
+cid_by_sample <- dt_cells[order(row), cid]
+agg_to_grid <- function(x) {
+  dt <- data.table(cid = cid_by_sample, val = x)
+  out <- dt[, .(val = mean(val, na.rm = TRUE)), by = cid][order(cid)]$val
+  if (length(out) != m) stop("Aggregation failed."); out
+}
+
+# Calculate and store Moran's I for all models and factors
+moran_results <- list()
+factors_to_calc <- paste0("Factor", factors_list)
+
+for (model_name in c("mofty", "mofty_cfm", "mofty_non_cfm")) {
+  current_model <- models[[model_name]]
+  Z <- get_factors(current_model, factors = factors_to_calc)[[1]]
+  Z <- Z[sample_metadata$sample, , drop = FALSE] # Align with sample_metadata order
+  
+  for (f in factors_to_calc) {
+    factor_values <- as.numeric(Z[, f])
+    x_cell <- agg_to_grid(factor_values)
+    mi <- Rfast2::moranI(x_cell, G_row_grid, scaled = TRUE, R = 0)[1]
+    moran_results[[paste(model_name, f, sep = "_")]] <- mi
+  }
+}
+moran_results_dt <- as.data.table(moran_results, keep.rownames = "key")
+
+back_ground_fill <- "#e6e6e6ff"   
+
+# Titles for each model row
+model_titles <- c(
+  mofty = "Combined",
+  mofty_cfm = "CFM",
+  mofty_non_cfm = "Non-CFM"
+)
+
+# Create lists to hold plot components
+factor_plots_list <- list()
+imputed_reconstructed_plot_rows <- list()
+
+
+# Create lists to hold plot components
+factor_plots_list <- list()
+lim <- 1.0
+
+make_row_right <- function(plotlist, ncol = 4) {
+  p <- unname(plotlist)
+  n_missing <- max(0, ncol - length(p))
+  p <- c(rep(list(NULL), n_missing), p)
+  cowplot::plot_grid(
+    plotlist = p,
+    ncol = ncol,
+    rel_widths = rep(1, ncol)
+  )
+}
+
+for (model_name in c("mofty", "mofty_cfm", "mofty_non_cfm")) {
+  current_model <- models[[model_name]]
+  print(current_model)
+
+  factors.dt <- get_factors(current_model, factors = factors_list)[[1]] %>%
+    as.data.table(keep.rownames = TRUE) %>%
+    setnames("rn", "sample")
+
+  to.plot_base <- sample_metadata[, c("sample", "UMAP1", "UMAP2")] %>%
+    merge(factors.dt, by = "sample") %>%
+    melt(id.vars = c("UMAP1", "UMAP2", "sample"), variable.name = "factor")
+
+  # --- New logic: Loop through factors to create individual plots with facet strips ---
+  factor_plot_list_inner <- list()
+  max_abs_vals_mofty <- list()
+
+  for (f_num in factors_list) {
+    f_name <- paste0("Factor", f_num)
+    factor_values_comb <- get_factors(models[["mofty"]], factors = f_num)[[1]]
+    factor_values_cfm <- get_factors(models[["mofty_cfm"]], factors = f_num)[[1]]
+    factor_values_non_cfm <- get_factors(models[["mofty_non_cfm"]], factors = f_num)[[1]]    
+    factor_values <- c(factor_values_comb, factor_values_cfm, factor_values_non_cfm)
+    max_abs_vals_mofty[[f_name]] <- max(abs(factor_values_comb), na.rm = TRUE)
+    
+  }
+  for (f in paste0("Factor", factors_list)) {
+    
+    to.plot_factor <- to.plot_base[factor == f]
+    to.plot_factor[, value := value / max_abs_vals_mofty[[f]]]
+    
+    # Create the label for the facet strip
+    mi_val <- moran_results[[paste(model_name, f, sep = "_")]]
+    factor_title <- sprintf("%s (<i>I</i>: %.2f)", f, mi_val)
+    to.plot_factor[, facet_label := factor_title]
+    to.plot_factor[, value_abs := abs(value)]
+    setorder(to.plot_factor, value_abs)
+    to.plot_factor[, value_abs := NULL]
+
+    p_factor <- ggscatter(
+      to.plot_factor, x = "UMAP1", y = "UMAP2", fill = "value",
+      size = 0.7, shape = 21, color = "black", stroke = 0.05, alpha = 1.0
+    ) +
+      facet_wrap(~facet_label) + # Use facet_wrap to get the strip box
+      scale_fill_gradientn(
+        colours = cols,
+        name = NULL,
+        limits = c(-1, 1),
+        breaks = c(-1, 0, 1),
+        labels = scales::number_format(accuracy = 0.1),
+        oob = scales::squish
+      ) +
+      theme_void() +
+      ggplot_theme_NoAxes() +
+      theme(
+        panel.grid = element_blank(),
+        plot.title = element_blank(), # No main title needed
+        strip.background = element_rect(fill = back_ground_fill, color = "black", linewidth = 0.5),
+        strip.text = ggtext::element_markdown(size = 6, margin = margin(t = 2, b = 2)),
+        axis.line = element_line(linewidth = 0.25),
+        legend.position = "none",
+        plot.margin = margin(t = 1, r = 1, b = 1, l = 1)
+      )
+      
+    factor_plot_list_inner[[f]] <- p_factor
+  }
+  
+  # Arrange the individual factor plots into a single row
+  p_row <- make_row_right(factor_plot_list_inner, ncol = 3)
+  
+  # Store the row without the title
+  factor_plots_list[[model_name]] <- p_row
+}
+
+# Arrange the final grid of all model rows
+final_factor_plot <- cowplot::plot_grid(
+  plotlist = factor_plots_list, 
+  ncol = 1
+)
+imputed_reconstructed_plot_rows[["factors"]] <- final_factor_plot
+```
+
+```{r}
+# === Part 2 & 3: Imputed and Reconstructed Plots ===
+views_to_plot <- c("motif_met", "motif_acc")
+target_genes <- c("MSGN1", "FOXA2")
+imputed_reconstructed_plot_rows_by_gene <- list()
+
+for (target_gene in target_genes) {
+  imputed_reconstructed_plot_rows <- list()
+
+  for (view in views_to_plot) {
+    # --- Data Preparation ---
+    all_features_in_view <- features_names(mofty)[[view]]
+    feature_to_plot <- grep(target_gene, all_features_in_view, value = TRUE)[1]
+
+    if (is.na(feature_to_plot)) {
+      stop(paste("No feature containing", shQuote(target_gene), "found in view:", view))
+    }
+
+    original_data_vec <- get_data(mofty, views = view, features = setNames(list(feature_to_plot), view))[[1]][[1]][1, ]
+
+    reconstructed_data_list <- list()
+
+    for (model_name in c("mofty", "mofty_cfm", "mofty_non_cfm")) {
+      current_model <- models[[model_name]]
+
+      Z_mat_full <- get_factors(current_model)[[1]]
+      W_df <- get_weights(current_model, views = view, as.data.frame = TRUE)
+      W_feat <- W_df[W_df$feature == feature_to_plot, ]
+      common_factors <- intersect(colnames(Z_mat_full), W_feat$factor)
+      Z_mat <- as.matrix(Z_mat_full[, common_factors, drop = FALSE])
+      W_vec <- setNames(W_feat$value, W_feat$factor)[common_factors]
+      reconstructed_data_list[[model_name]] <- as.numeric(Z_mat %*% W_vec)
+    }
+
+    to.plot_reconstructed_base <- data.table(
+      sample = names(original_data_vec),
+      original = original_data_vec
+    )
+    to.plot_reconstructed_base[[model_titles["mofty"]]] <- reconstructed_data_list[["mofty"]]
+    to.plot_reconstructed_base[[model_titles["mofty_cfm"]]] <- reconstructed_data_list[["mofty_cfm"]]
+    to.plot_reconstructed_base[[model_titles["mofty_non_cfm"]]] <- reconstructed_data_list[["mofty_non_cfm"]]
+
+    to.plot_reconstructed_base <- to.plot_reconstructed_base %>%
+      melt(id.vars = "sample", value.name = "value") %>%
+      merge(sample_metadata[, c("sample", "UMAP1", "UMAP2")], by = "sample")
+
+    to.plot_reconstructed_base$variable <- factor(
+      to.plot_reconstructed_base$variable,
+      levels = c("original", model_titles["mofty"], model_titles["mofty_cfm"], model_titles["mofty_non_cfm"])
+    )
+
+    reconstructed_plot_list_inner <- list()
+    plot_vars <- levels(to.plot_reconstructed_base$variable)
+
+    mofty_combined_data <- to.plot_reconstructed_base[variable == model_titles["mofty"]]
+    mofty_cfm_data <- to.plot_reconstructed_base[variable == model_titles["mofty_cfm"]]
+    mofty_non_cfm_data <- to.plot_reconstructed_base[variable == model_titles["mofty_non_cfm"]]
+    original_data <- to.plot_reconstructed_base[variable == "original"]
+
+    data_values <- c(
+      mofty_combined_data$value,
+      mofty_cfm_data$value,
+      mofty_non_cfm_data$value,
+      original_data$value
+    )
+    lim <- max(abs(data_values), na.rm = TRUE)
+
+    for (p_var in plot_vars) {
+      to.plot_single <- to.plot_reconstructed_base[variable == p_var]
+      if (p_var == "original") {
+        # Draw NA values first so non-NA points sit on top
+        to.plot_single <- to.plot_single[order(is.na(value), decreasing = TRUE)]
+      }
+
+      if (p_var == "original") {
+        n_total <- length(original_data_vec)
+        n_nas <- sum(is.na(original_data_vec))
+        na_percentage <- (n_nas / n_total) * 100
+        plot_title <- sprintf("Original data<br>(%.1f%% NA)", na_percentage)
+      } else {
+        data_for_moran <- to.plot_single[match(sample_metadata$sample, sample), ]$value
+        x_cell <- agg_to_grid(data_for_moran)
+        mi_val <- Rfast2::moranI(x_cell, G_row_grid, scaled = TRUE, R = 0)[1]
+        reconstructed_values <- to.plot_single[match(names(original_data_vec), sample), ]$value
+        r_squared <- 100 * cor(original_data_vec, reconstructed_values, use = "pairwise.complete.obs")^2
+        plot_title <- sprintf(
+          "%s<br>(*R*<sup>2</sup>: %.1f%%, <i>I</i>: %.2f)",
+          p_var, r_squared, mi_val
+        )
+      }
+
+      to.plot_single[, facet_label := plot_title]
+      to.plot_single[, value_abs := abs(value)]
+      setorder(to.plot_single, value_abs)
+      to.plot_single[, value_abs := NULL]
+
+      p_single_rec <- ggscatter(
+        to.plot_single, x = "UMAP1", y = "UMAP2", fill = "value",
+        size = 0.7, shape = 21, color = "black", stroke = 0.05, alpha = 1.0
+      ) +
+        facet_wrap(~facet_label) +
+        scale_fill_gradientn(
+          colours = cols,
+          name = NULL,
+          limits = c(-lim, lim), breaks = c(-lim, 0, lim),
+          labels = scales::number_format(accuracy = 0.1),
+          oob = scales::squish,
+          na.value = "#767676ff"
+        ) +
+        theme_void() +
+        ggplot_theme_NoAxes() +
+        theme(
+          panel.grid = element_blank(),
+          plot.title = element_blank(), # No main title needed
+          strip.background = element_rect(fill = back_ground_fill, color = "black", linewidth = 0.5),
+          strip.text = ggtext::element_markdown(size = 6, margin = margin(t = 2, b = 2), lineheight = 1.2),
+          axis.line = element_line(linewidth = 0.25),
+          legend.position = "none",
+          plot.margin = margin(t = 1, r = 1, b = 1, l = 1)
+        )
+
+      reconstructed_plot_list_inner[[p_var]] <- p_single_rec
+    }
+
+    # Arrange the individual plots into a single row
+    p_rec_row <- make_row_right(reconstructed_plot_list_inner, ncol = 4)
+
+    # Store the row without the title
+    imputed_reconstructed_plot_rows[[paste0(view, "_reconstructed")]] <- p_rec_row
+  }
+
+  imputed_reconstructed_plot_rows_by_gene[[target_gene]] <- imputed_reconstructed_plot_rows
+}
+```
+
+```{r}
+# === Create a shared horizontal color bar ===
+p_dummy_legend <- ggplot(data.frame(value = c(-1, 1)), aes(x = 1, y = 1, fill = value)) +
+  geom_tile() +
+  scale_fill_gradientn(
+    colours = cols,
+    name = NULL, limits = c(-1, 1),
+    breaks = c(-0.94, 0, 0.94),
+    labels = c("\u2212", "\u0030", "\u002B"),
+    guide = guide_colorbar(ticks = FALSE, draw.ulim = FALSE, draw.llim = FALSE)
+  ) +
+  theme(
+    legend.ticks = element_blank(),
+    legend.ticks.length = unit(0, "pt")
+  ) +
+  theme(
+    legend.position = c(0.996, 0.3),
+    legend.justification = c(1, 0),
+    legend.direction = "horizontal",
+    legend.key.width = unit(0.3, "cm"), 
+    legend.key.height = unit(0.15, "cm"), 
+    legend.text = element_text(size = 5, margin = margin(t = 1, r = 2, b = 0, l = 0, unit = "pt")),
+    legend.margin = margin(t = 0, r = 0, b = 5, l = 0),
+    legend.background = element_rect(fill = "transparent", colour = NA)
+  )
+shared_colorbar <- cowplot::get_legend(p_dummy_legend)
+```
+
+
+```{r}
+factors_plot <- cowplot::plot_grid(
+  cowplot::ggdraw() + cowplot::draw_label(model_titles[["mofty"]], hjust = 0.6, vjust = 0.5, fontface = "plain", size = 7),
+  factor_plots_list[["mofty"]],
+  cowplot::ggdraw() + cowplot::draw_label(model_titles[["mofty_cfm"]], hjust = 0.5, vjust = 0.5, fontface = "plain", size = 7),
+  factor_plots_list[["mofty_cfm"]],
+  cowplot::ggdraw() + cowplot::draw_label(model_titles[["mofty_non_cfm"]], hjust = 0.5, vjust = 0.5, fontface = "plain", size = 7),
+  factor_plots_list[["mofty_non_cfm"]],
+  shared_colorbar,
+  ncol = 1,
+  rel_heights = c(0.1, 1, 0.1, 1, 0.1, 1, 0.2) # Adjusted relative heights
+)
+
+# Save the final combined plot
+ggsave(
+    filename = file.path("../paper/scnmt", "scnmt_factors.pdf"),
+    plot = factors_plot,
+    width = 10/2.54, # Adjusted width for 4 columns
+    height = 15/2.54, # Adjusted height for titles and spacing
+    device = "pdf",
+    bg = "transparent"
+)
+```
+
+
+```{r}
+for (target_gene in names(imputed_reconstructed_plot_rows_by_gene)) {
+  gene_rows <- imputed_reconstructed_plot_rows_by_gene[[target_gene]]
+
+  imputation_plot <- cowplot::plot_grid(
+    cowplot::ggdraw() + cowplot::draw_label(sprintf("Reconstruction and Imputation: %s (methylation)", target_gene), hjust = 0.5, vjust = 0.5, fontface = "plain", size = 7),
+    gene_rows[["motif_met_reconstructed"]],
+    cowplot::ggdraw() + cowplot::draw_label(sprintf("Reconstruction and Imputation: %s (accessibility)", target_gene), hjust = 0.5, vjust = 0.5, fontface = "plain", size = 7),
+    gene_rows[["motif_acc_reconstructed"]],
+    shared_colorbar,
+    ncol = 1,
+    rel_heights = c(0.1, 1, 0.1, 1, 0.25) # Adjusted relative heights
+  )
+
+  # Save one imputation figure per target gene
+  ggsave(
+      filename = file.path("../paper/scnmt", sprintf("scnmt_imputation_%s.pdf", tolower(target_gene))),
+      plot = imputation_plot,
+      width = 10/2.54, # Adjusted width for 4 columns
+      height = 8/2.54, # Adjusted height for titles and spacing
+      device = "pdf",
+      bg = "transparent"
+  )
+}
+```
+
+
+# Analyses of weights
+```{r}
+# Factors to export individually
+factor_list <- c(2,6)
+
+w.met <- get_weights(mofty, views="motif_met", factors=factor_list, as.data.frame=TRUE) %>% 
+  as.data.table() %>% 
+  .[, feature := gsub("_met", "", feature)] %>%
+  .[, value := value / max(abs(value)), by = "factor"]
+
+w.acc <- get_weights(mofty, views="motif_acc", factors=factor_list, as.data.frame=TRUE) %>% 
+  as.data.table() %>% 
+  .[, feature := gsub("_acc", "", feature)] %>%
+  .[, value := value / max(abs(value)), by = "factor"]
+
+w.dt <- merge(
+  w.met[, c("feature", "factor", "value")], 
+  w.acc[, c("feature", "factor", "value")], 
+  by = c("feature", "factor")
+) %>% .[, feature := strsplit(feature, "_") %>% map_chr(1)]
+
+# Define plot function
+factor_plot <- function(factor_id, show_x_axis = TRUE) {
+  to.plot <- copy(w.dt[factor == factor_id])
+  
+  to.label <- copy(w.dt[factor == factor_id]) %>%
+    .[, value := abs(value.x) + abs(value.y)] %>%
+    setorder(-value) %>% 
+    head(n = 10)
+
+  p <- ggplot(to.plot, aes(x = value.x, y = value.y)) +
+    geom_point(size = 0.5, color = "#6f99e7", alpha = 1) +
+    geom_smooth(method = "lm", color = "#636363", fill = "#afafaf", linewidth = 0.25) +
+    coord_cartesian(xlim = c(-1, 1), ylim = c(-1, 1)) +
+    scale_x_continuous(breaks = c(-1, 0, 1)) +
+    scale_y_continuous(breaks = c(-1, 0, 1)) +
+    geom_label_repel(
+      data = to.label, aes(label = feature),
+      size = 4.5 /.pt, max.overlaps = 100,
+      box.padding = 0.07, point.padding = 0.0,
+      force = 2, force_pull = 10, direction = "both",
+      segment.size = 0.15, segment.color = "black", min.segment.length = 0,
+      fill = scales::alpha("#d7bdfa", 0.7),
+      linewidth = 0.1,
+      label.padding = unit(0.05, "lines"),
+      label.r = unit(0.1, "pt")
+    ) +
+    geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.25) +
+    geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.25) +
+    stat_cor(
+      aes(label = paste0(
+        "italic(r)==", sprintf("%.2f", after_stat(r)), "*','~",
+        after_stat(p.label)
+      )),
+      method = "pearson", label.x = -1, label.y = -1, hjust = 0, size = 5 / .pt
+    ) +
+    labs(x = "Methylation weights", y = "Accessibility weights") +
+    theme_classic() +
+    theme(axis.title = element_text(size = 5), axis.text = element_text(size = 5),
+          axis.line = element_blank(), axis.ticks = element_line(linewidth = 0.25),
+          panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5),
+          plot.margin = margin(2, 2, 2, 2)) +
+    annotate("text", x = 1, y = 1, label = factor_id, hjust = 1.1, vjust = 1.1, size = 6 / .pt)
+  
+  if (!show_x_axis) {
+    p <- p + theme(
+      axis.title.x = element_text(color = "transparent"),
+      axis.text.x  = element_text(color = "transparent"),
+      axis.ticks.x = element_line(color = "transparent")
+    )
+  }
+  return(p)
+}
+
+# Create and save one plot per factor
+for (factor_id in paste0("Factor", factor_list)) {
+  p_factor <- factor_plot(factor_id, show_x_axis = TRUE)
+  out_name <- sprintf("scnmt_weights_scatter_%s.pdf", tolower(factor_id))
+  ggsave(
+    filename = file.path("../paper/scnmt", out_name),
+    plot = p_factor,
+    width = 6.5 / 2.54,
+    height = 5.5 / 2.54,
+    device = "pdf",
+    bg = "transparent"
+  )
+}
+```
+
+
+## Weight statistics
+```{r}
+views_for_stats <- c("RNA", "motif_met", "motif_acc")
+all_factor_ids <- 1:10
+
+for (view_name in views_for_stats) {
+  # Get raw (unscaled) weights for all factors
+  w_raw <- get_weights(mofty, views = view_name, factors = all_factor_ids, as.data.frame = TRUE) %>%
+    as.data.table()
+
+  stats_list <- lapply(paste0("Factor", all_factor_ids), function(f) {
+    vals <- w_raw[factor == f, value]
+
+    # Scaled MAD  (R's mad() uses constant = 1.4826 by default)
+    med_val <- median(vals, na.rm = TRUE)
+    scaled_mad_val <- mad(vals, na.rm = TRUE)
+
+    # over_mad for every feature: |w - median(w)| / scaled_MAD
+    over_mad <- abs(vals - med_val) / scaled_mad_val
+
+    # Top 1% by absolute weight value -> minimum over_mad among them
+    n_top <- max(1, ceiling(length(vals) * 0.01))
+    top_idx <- order(abs(vals), decreasing = TRUE)[1:n_top]
+    min_over_mad_top1 <- min(over_mad[top_idx])
+
+    data.table(
+      factor           = f,
+      scaled_mad       = round(scaled_mad_val, 6),
+      min_over_mad_top1pct = round(min_over_mad_top1, 4)
+    )
+  })
+
+  stats_dt <- rbindlist(stats_list)
+
+  out_file <- file.path("../paper/scnmt",
+                         sprintf("scnmt_%s_weight_stats.csv", tolower(view_name)))
+  fwrite(stats_dt, out_file)
+  cat(sprintf("\n=== %s ===\nSaved: %s\n", view_name, out_file))
+  print(stats_dt)
+}
+```
+
+
+# Gene set enrichment analysis (GSEA)
+```{r}
+data("MSigDB_v6.0_C5_mouse") 
+```
+
+```{r echo=FALSE}
+features_names(mofty)[["RNA"]] <- toupper(features_names(mofty)[["RNA"]])
+```
+
+```{r}
+enrichment.out <- run_enrichment(
+  object = mofty,
+  view = "RNA",
+  feature.sets = MSigDB_v6.0_C5_mouse,
+  statistical.test = "parametric",
+  alpha = 0.05
+)
+```
+
+```{r}
+enrichment.out$set.statistics
+```
+
+```{r}
+# Save enrichment statistics with p-values (long format)
+stats_mat <- enrichment.out$set.statistics
+pval_mat <- enrichment.out$pval
+padj_mat <- enrichment.out$pval.adj
+
+stats_long <- data.table(
+  pathway = rep(rownames(stats_mat), times = ncol(stats_mat)),
+  factor = rep(colnames(stats_mat), each = nrow(stats_mat)),
+  statistic = as.numeric(stats_mat),
+  pval = as.numeric(pval_mat),
+  padj = as.numeric(padj_mat)
+)
+stats_long[, neglog10_padj := -log10(padj)]
+
+stats_csv <- file.path("../paper/scnmt", "scnmt_enrichment_stats_pvals.csv")
+fwrite(stats_long, stats_csv)
+cat("Saved enrichment statistics with p-values to:", stats_csv, "\n")
+
+factor_list <- c(4)
+
+get_mapped_var <- function(plot_obj, aes_name) {
+  extract_var <- function(expr_obj, data_names) {
+    if (is.null(expr_obj)) return(NA_character_)
+    if (is.symbol(expr_obj)) {
+      nm <- as.character(expr_obj)
+      if (nm %in% data_names) return(nm)
+    }
+    vars <- all.vars(expr_obj)
+    vars <- vars[vars %in% data_names]
+    if (length(vars) > 0) return(vars[1])
+    NA_character_
+  }
+
+  data_names <- names(plot_obj$data)
+  m <- plot_obj$mapping[[aes_name]]
+  var_name <- extract_var(m, data_names)
+  if (!is.na(var_name)) return(var_name)
+  for (ly in plot_obj$layers) {
+    ml <- ly$mapping[[aes_name]]
+    var_name <- extract_var(ml, data_names)
+    if (!is.na(var_name)) return(var_name)
+  }
+  NA_character_
+}
+
+for (i in factor_list) {
+  stats_i <- as.numeric(stats_mat[, i])
+  names(stats_i) <- rownames(stats_mat)
+  sign_map <- ifelse(stats_i > 0, "+", ifelse(stats_i < 0, "-", "0"))
+  names(sign_map) <- names(stats_i)
+
+  p <- plot_enrichment(enrichment.out, factor = i, max.pathways = 10)
+
+  x_var <- get_mapped_var(p, "x")
+  y_var <- get_mapped_var(p, "y")
+
+  ann <- NULL
+  x_is_num <- FALSE
+  y_is_num <- FALSE
+  x_lim_right <- NA_real_
+  y_lim_top <- NA_real_
+  if (!is.na(x_var) && !is.na(y_var) && x_var %in% names(p$data) && y_var %in% names(p$data)) {
+    x_raw <- p$data[[x_var]]
+    y_raw <- p$data[[y_var]]
+
+    x_is_num <- is.numeric(x_raw)
+    y_is_num <- is.numeric(y_raw)
+
+    if (x_is_num && !y_is_num) {
+      x_vals <- as.numeric(x_raw)
+      y_vals <- as.character(y_raw)
+      sign_vals <- sign_map[match(y_vals, names(sign_map))]
+      sign_vals[is.na(sign_vals)] <- ""
+
+      x_rng <- range(x_vals, na.rm = TRUE)
+      x_lim_right <- x_rng[2] 
+      ann <- data.frame(x = x_lim_right, y = y_vals, sign_label = sign_vals)
+    } else if (y_is_num && !x_is_num) {
+      x_vals <- as.character(x_raw)
+      y_vals <- as.numeric(y_raw)
+      sign_vals <- sign_map[match(x_vals, names(sign_map))]
+      sign_vals[is.na(sign_vals)] <- ""
+
+      y_rng <- range(y_vals, na.rm = TRUE)
+      y_lim_top <- y_rng[2] + 5
+      ann <- data.frame(x = x_vals, y = y_lim_top, sign_label = sign_vals)
+    }
+  }
+
+  label_wrap <- function(x) {
+    x_clean <- gsub("_", " ", x)
+    vapply(x_clean, function(label) {
+      paste(strwrap(label, width = 40), collapse = "\n")
+    }, character(1))
+  }
+
+  p <- p +
+    labs(y = bquote("Factor" ~ .(i) * ", GSEA (-log adj. " * italic(p) * "-value)")) +
+    labs(x = NULL) +
+    theme_classic() +
+    theme(
+      text = element_text(size = 5),
+      axis.line = element_line(linewidth = 0.25, color = "black"),
+      axis.ticks = element_line(linewidth = 0.25, color = "black"),
+      plot.title = element_text(size = 5, hjust = 0.5),
+      axis.text.x = element_text(color = "black"),
+      axis.text.y = element_text(color = "black"),
+      panel.border = element_blank(),
+      panel.background = element_rect(fill = "transparent", colour = NA),
+      plot.background = element_rect(fill = "transparent", colour = NA)
+    )
+
+  if (x_is_num) {
+    p <- p +
+      scale_y_discrete(labels = label_wrap) +
+      scale_x_continuous(limits = c(NA, x_lim_right), expand = expansion(mult = c(0, 0)))
+  } else if (y_is_num) {
+    p <- p +
+      scale_x_discrete(labels = label_wrap) +
+      scale_y_continuous(limits = c(NA, y_lim_top), expand = expansion(mult = c(0, 0)))
+  } else {
+    p <- p + scale_x_discrete(labels = label_wrap)
+  }
+
+  if (!is.null(ann)) {
+    p <- p + geom_text(
+      data = ann,
+      aes(x = x, y = y, label = sign_label),
+      inherit.aes = FALSE,
+      size = 2.0,
+      hjust = 1,
+      vjust = 0.5,
+      color = "black"
+    )
+  }
+
+  # Make the dot at the end of each bar smaller
+  p$layers <- lapply(p$layers, function(l) {
+    if (inherits(l$geom, "GeomPoint")) l$aes_params$size <- 0.5
+    if (inherits(l$geom, "GeomSegment")) l$aes_params$linewidth <- 0.25
+    if (inherits(l$geom, "GeomLinerange")) l$aes_params$linewidth <- 0.25
+    l
+  })
+  p$layers <- p$layers[!vapply(p$layers, function(l) inherits(l$geom, "GeomHline"), logical(1))]
+
+  ggsave(
+    filename = file.path("../paper/scnmt", sprintf("scnmt_enrichment_factor%s.pdf", i)),
+    plot = p,
+    width = 6.7 / 2.54,
+    height = 3.8 / 2.54,
+    device = "pdf",
+    bg = "transparent"
+  )
+}
+```
+
+
+```{r}
+sessionInfo()
+```

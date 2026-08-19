@@ -1,0 +1,29 @@
+INPUT_DIR: input/input_syn_cfm_dim2_100
+OUTPUT_BASE_DIR: output/output_syn_rec_cfm_dim2_100
+DATA_KEYS:
+- view_1
+- view_2
+- view_3
+LIKELIHOOD_OPTIONS:
+  view_1: gaussian
+  view_2: gaussian
+  view_3: gaussian
+USE_COVARIATES: true
+INIT_CFM: true
+SYN_DATA_REC: true
+FACTOR_INIT: PCA
+RESUME_TRAINING: true
+N_ITERATIONS: 30
+PLOT_DOT_SIZE: 0.5
+SEEDS:
+- 186930167
+- 285146221
+- 1534525703
+- 1380995735
+REF_SEED_DICT:
+  5: 186930167
+N_FACTORS_LIST:
+- 5
+- 5
+- 5
+- 5

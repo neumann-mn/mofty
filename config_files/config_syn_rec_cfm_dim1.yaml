@@ -1,0 +1,20 @@
+INPUT_DIR: input/input_syn_cfm_dim1
+OUTPUT_BASE_DIR: output/output_syn_rec_cfm_dim1
+DATA_KEYS:
+- view_1
+- view_2
+- view_3
+LIKELIHOOD_OPTIONS:
+  view_1: gaussian
+  view_2: gaussian
+  view_3: gaussian
+USE_COVARIATES: true
+INIT_CFM: true
+SYN_DATA_REC: true
+FACTOR_INIT: PCA
+N_FACTORS_INIT: 5
+N_FACTORS_FINAL: 5
+N_FACTORS_STEP: 1
+N_SEEDS_PER_STEP: 4
+N_ITERATIONS: 30
+RESUME_TRAINING: true

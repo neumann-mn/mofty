@@ -1,0 +1,27 @@
+INPUT_DIR: input/input_syn_cfm_dim1
+SYN_DATA: true
+DATA_KEYS:
+- view_1
+- view_2
+- view_3
+LIKELIHOOD_OPTIONS:
+  view_1: gaussian
+  view_2: gaussian
+  view_3: gaussian
+USE_COVARIATES: true
+INIT_CFM: true
+COVARIATES_SHAPE: 
+  - 900
+CFM_SCALING_VALUES:
+  - 0.99
+  - 0.75
+  - 0.5
+  - 0.25
+  - 0.01
+N_FEATURES:
+  - 300
+  - 300
+  - 300
+N_FACTORS: 5
+PADDING: 1.0
+SEED: 42

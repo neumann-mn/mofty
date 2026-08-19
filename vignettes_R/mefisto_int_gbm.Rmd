@@ -1,0 +1,29 @@
+This file is part of MOFTy.
+
+MOFTy is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License version 3 as published by the Free
+Software Foundation.
+
+MOFTy is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+MOFTy. If not, see http://www.gnu.org/licenses/
+
+Copyright(C) 2026 Maximilian Neumann
+
+```{r}
+library(MOFA2)
+```
+
+```{r}
+mefisto_file <- "../output/output_gbm_mefisto/mefisto_model_trained_fullGP.hdf5"
+mefisto <- load_model(mefisto_file, sort_factors = FALSE, verbose = TRUE, remove_inactive_factors = FALSE)
+```
+
+```{r}
+mefisto <- interpolate_factors(mefisto, mefisto@covariates[[1]])
+Z_interpol <- t(get_interpolated_factors(mefisto, only_mean = TRUE)[[1]]$mean)
+write.csv(Z_interpol, file = "../output/output_gbm_mefisto/Z_interpolated_fullGP.csv")
+```

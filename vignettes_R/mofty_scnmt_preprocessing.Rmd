@@ -1,0 +1,67 @@
+This file is part of MOFTy.
+
+MOFTy is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License version 3 as published by the Free
+Software Foundation.
+
+MOFTy is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+MOFTy. If not, see http://www.gnu.org/licenses/
+
+Copyright(C) 2026 Maximilian Neumann
+
+# scNMT preprocessing
+
+First replace in `reticulate::use_condaenv("mofa2_analysis", conda = "/Users/maximilianneumann/.local/bin/micromamba", required = TRUE)` the user-specific path to micromamba with the appropriate path on your system.
+
+```{r}
+reticulate::use_condaenv("mofa2_analysis", conda = "/Users/maximilianneumann/.local/bin/micromamba", required = TRUE)
+library(data.table)
+library(MOFA2)
+```
+
+
+# Load data
+The scNMT dataset (scnmt_data.txt.gz) and metadata (scnmt_sample_metadata.txt) is available from the MEFISTO tutorials: [here](https://figshare.com/s/242916198fde3353f3e6)
+
+```{r}
+data <- fread("../input/input_scnmt/scnmt_data.txt")
+head(data,n=3)
+```
+
+```{r}
+sample_metadata <- fread("../input/input_scnmt/scnmt_sample_metadata.txt")
+colnames(sample_metadata)
+```
+
+
+# Prepare untrained MEFISTO object
+```{r}
+outfile <- "../input/input_scnmt/mefisto_model_untrained.hdf5"
+mefisto <- create_mofa_from_df(data)
+samples_metadata(mefisto) <- sample_metadata %>% 
+  .[sample%in%unlist(samples_names(mefisto))] %>%
+  setkey(sample) %>% .[unlist(samples_names(mefisto))]
+model_opts <- get_default_model_options(mefisto)
+mefisto <- set_covariates(mefisto, c("UMAP1","UMAP2"))
+train_opts <- get_default_training_options(mefisto) 
+train_opts$maxiter <- 0
+mefisto_opts <- get_default_mefisto_options(mefisto)
+data_opts <- get_default_data_options(mefisto)
+data_opts$use_float32 <- FALSE
+mefisto <- prepare_mofa(
+  mefisto,
+  model_options = model_opts,
+  mefisto_options = mefisto_opts,
+  training_options = train_opts,
+  data_options = data_opts
+)
+mefisto <- run_mofa(mefisto, outfile=outfile)
+```
+
+```{r}
+sessionInfo()
+```
